@@ -4,8 +4,10 @@ clear all
 close all
 
 %Add structure formats once non-linear dynamics are added.
-quad = struct;
-qsim = struct;
+quad   = struct;
+qsim   = struct;
+QR_LQR = struct;
+noise  = struct;
 
 %Quadrotor definitions
 quad.m = 0.11;  %kg
@@ -16,18 +18,22 @@ quad.w = 50;
 quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
+quad.sample_rate = 0.002; %s
 
 %Simulation Parameters
 qsim.g = 9810;  %mm/s^2
-qsim.tmax = 100;
+qsim.tmax = 50;
 qsim.dt = 0.001;
 qsim.N = qsim.tmax/qsim.dt;
+qsim.t_loop = 0;
 
 dt = qsim.dt;
 tmax = qsim.tmax;
 N = qsim.N;
 
 %Variable Init
+temp_control = quad.sample_rate;
+%temp_control = 0;
 u =     zeros(4, qsim.N); %Postion control inputs
 q =     zeros(12, qsim.N); %state
 y =     zeros(9, qsim.N); %Output
@@ -86,46 +92,58 @@ C = [1 0 0 0 0 0 0 0 0 0 0 0;
      0 0 0 0 0 0 0 0 0 0 0 1];
 
 %State Noise Matrix Definitions
+noise.pos = 0.005;
+noise.rot = 0.01*pi()/180;
+noise.vel = 0;
+noise.ang_vel = 0.005;
+
 pos_noise = 0.005;
 rot_noise = 0.01*pi()/180;
 vel_noise = 0;
 ang_vel_noise = 0.005;
 
-F = [eye(3)*pos_noise, zeros(3,9);
-     zeros(3,3), eye(3)*rot_noise, zeros(3,6);
-     zeros(3,6), eye(3)*vel_noise, zeros(3,3);
-     zeros(3,9), eye(3)*ang_vel_noise];
+F = [eye(3)*noise.pos, zeros(3,9);
+     zeros(3,3), eye(3)*noise.rot, zeros(3,6);
+     zeros(3,6), eye(3)*noise.vel, zeros(3,3);
+     zeros(3,9), eye(3)*noise.ang_vel];
+
+%Testing fixed linearized A and B matricies
+A_fixed = A(q(:,1),u(:,1));
+B_fixed = B(q(:,1));
 
 %Measurement Noise Matrix Definitions
-pos_measurement_noise = 0.05;
-rot_measurement_noise = 0.01*pi()/180;
-vel_measurement_noise = 0;
-ang_vel_measurement_noise = 0.05;
+noise.pos_measurement = 0.05;
+noise.rot_measurement = 0.01*pi()/180;
+noise.vel_measurement = 0;
+noise.ang_vel_measurement = 0.05;
 
-H = [eye(3)*pos_measurement_noise, zeros(3,9);
-     zeros(3,3), eye(3)*rot_measurement_noise, zeros(3,6);
-     zeros(3,9), eye(3)*ang_vel_measurement_noise];
+H = [eye(3)*noise.pos_measurement, zeros(3,9);
+     zeros(3,3), eye(3)*noise.rot_measurement, zeros(3,6);
+     zeros(3,9), eye(3)*noise.ang_vel_measurement];
  
 %% Optimal LQR Controller
 %Based off the cost function int[0-inf](||d(t)||^2 + ||u(t)||^2)dt
 %k_lqr is found such that u* = k_lqr*x(t)
 
 %Initialize P = Qf, which is 1.
-%Q = eye(12);
-%Q = [eye(3)*0.1, zeros(3,9); zeros(3,3), eye(3)*0.1, zeros(3,6); zeros(3,6), eye(3)*10, zeros(3,3); zeros(3,9), eye(3)*0.1]
-Q = C'*C*2;
-P = Q;
-R = eye(4)*0.05;
+QR_LQR.Q = C'*C*2;
+QR_LQR.P = QR_LQR.Q;
+QR_LQR.R = eye(4)*0.05;
+QR_LQR.h = 0.001;
 
-% h = 0.001;
-% for i=1:100
-%     %Linearized
-%     P = P + h*(Q+P*A(q,u)+A(q,u)'*P-P*B(q)*inv(R)*B(q)'*P);  %Pt = Pt+h - dt*dPdt
-% end
-% 
-% %Derived that optimal state feedback gain for cost function
-% %Linearized
-% K = -inv(R)*B(q)'*P
+%Import LQR values
+Q = QR_LQR.Q;
+P = QR_LQR.P;
+R = QR_LQR.R;
+h = QR_LQR.h;
+for i=1:100
+    %Riccati Recursion
+    P = P + h*(Q+P*A(q(:,1),u(:,1))+A(q(:,1),u(:,1))'*P-P*B(q(:,1))*inv(R)*B(q(:,1))'*P);  %Pt = Pt+h - dt*dPdt
+end
+
+%Derived that optimal state feedback gain for cost function
+%Linearized
+K = -inv(R)*B(q(:,1))'*P
 
 %% Rotational PID controller Parameters
 %Current Parameters on QR
@@ -190,9 +208,9 @@ des(1:3,t) = [r*0.05*dt*t*cos(dt*t*omega);r*0.05*dt*t*sin(dt*t*omega);0.015*dt*t
 % end
 
 %Ends flight path preemptively and QR is supposed to stop at point, allows inspection 
-% if t > 3*N/4
-%   des(1:3,t) = des(1:3,t-1);  
-% end
+if t > 3*N/4
+  des(1:3,t) = des(1:3,t-1);  
+end
 
 %% Control Inputs
 %Determine error of state from destination list (t+1 simply to store
@@ -273,12 +291,18 @@ m2 = -C_r(1,1) - C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
 m3 =  C_r(1,1) + C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
 m4 = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
 
-%LQR CONTROL
-P = P + dt*(Q+P*A(q,u)+A(q,u)'*P-P*B(q)*inv(R)*B(q)'*P);  %Pt = Pt+h - dt*dPdt
-K = -inv(R)*B(q)'*P;
+% %LQR CONTROL RECURSION (State-dependent A and B)
+% P = P + QR_LQR.h*(Q+P*A(q(:,t),u(:,t))+A(q(:,t),u(:,t))'*P-P*B(q(:,t))*inv(R)*B(q(:,t))'*P);  %Pt = Pt+h - dt*dPdt
+% K = -inv(R)*B(q(:,t))'*P;
+
+% %LQR CONTROL RECURSION (Fixed-dependent A and B)
+% P = P + QR_LQR.h*(Q+P*A_fixed+A_fixed'*P-P*B_fixed*inv(R)*B_fixed'*P);  %Pt = Pt+h - dt*dPdt
+% K = -inv(R)*B_fixed'*P;
+
+% %APPLY LQR CONTROL
 u(:,t) = K*(q(:,t)-des(:,t));
- 
-%Convert thrust to motor speed command (LQR ONLY)
+
+%Convert thrust to motor speed command (LQR ONLY )
 m1 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(1,t)*4/1000)))/(2*(2.3159e-6));
 m2 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(2,t)*4/1000)))/(2*(2.3159e-6));
 m3 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(3,t)*4/1000)))/(2*(2.3159e-6));
@@ -310,16 +334,29 @@ for i = 1:4
    u(i,t) = 1000*((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
 end
 
+%DESCRETE SAMPLING CONTROL APPLICATION
+%Test descrete sampling rate of data (eg: position data provided at rate of
+%~10-15ms, so control value does not get updated until new data is recieved)
+if qsim.t_loop >= quad.sample_rate
+    u(:,t) = u(:,t);
+    temp_control = u(:,t);
+    qsim.t_loop = 0;
+else
+    u(:,t) = temp_control;
+end
+qsim.t_loop = qsim.t_loop + qsim.dt;
+%u(:,t)
+
 %Forward Euler approx of position/rotation, q(t+1) = q(t) + dt*q'(t)
 %Linearized
 %q(:,t+1) = q(:,t) + dt*(A(q,u)*q(:,t)+B(q)*u(:,t));
 
-%Non-linear Dynamics
-q(:,t+1) = QR_NL_Dyn(q(:,t),u(:,t),quad,qsim);
-%q(:,t+1) = q(:,t) + dt*(A*q(:,t)+B*u(:,t) + F*randn(12,1));
+%Non-linear Dynamics (Noise and Noise-less Available)
+q(:,t+1) = QR_NL_Dyn((q(:,t)),u(:,t),quad,qsim);
+%q(:,t+1) = QR_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
 
-%y(:,t) = C*q(:,t);
-y(:,t) = C*q(:,t)+H*rand(12,1);
+y(:,t) = C*q(:,t);
+%y(:,t) = C*q(:,t)+H*randn(12,1);
 end
 
 %Plot state dynamics
