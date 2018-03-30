@@ -18,7 +18,7 @@ quad.w = 50;
 quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
-quad.sample_rate = 0.01; %s
+quad.sample_rate = 0.002; %s
 
 %Simulation Parameters
 qsim.g = 9810;  %mm/s^2
@@ -306,17 +306,17 @@ m4 = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
 % K = -inv(R)*B_fixed'*P;
 
 %DISCRETE TIME RICCATI RECURSION
-% P = Ad'*P*Ad-(Ad'*P*Bd)*inv(R+Bd'*P*Bd)*(Bd'*P*Ad) + Q;
-% K = -inv(R+Bd'*P*Bd)*Bd'*P*Ad;
+P = Ad'*P*Ad-(Ad'*P*Bd)*inv(R+Bd'*P*Bd)*(Bd'*P*Ad) + Q;
+K = -inv(R+Bd'*P*Bd)*Bd'*P*Ad;
 
 % %APPLY LQR CONTROL
 u(:,t) = K*(q(:,t)-des(:,t));
 
 %Convert thrust to motor speed command (LQR ONLY )
-m1 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(1,t)*4/1000)))/(2*(2.3159e-6));
-m2 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(2,t)*4/1000)))/(2*(2.3159e-6));
-m3 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(3,t)*4/1000)))/(2*(2.3159e-6));
-m4 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(4,t)*4/1000)))/(2*(2.3159e-6));
+m1 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(1,t)*4/1000)))/(2*(2.3159e-6));
+m2 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(2,t)*4/1000)))/(2*(2.3159e-6));
+m3 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(3,t)*4/1000)))/(2*(2.3159e-6));
+m4 = ((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(4,t)*4/1000)))/(2*(2.3159e-6));
 
 %Rounding the motor command values to the nearest integer value
 m1 = round(m1)+hover;
@@ -341,21 +341,21 @@ for i = 1:4
    end
 
    %Convert motor command back to a force
-   u(i,t) = 1000*((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
+   u(i,t) = 1000*real((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
 end
 
 %DESCRETE SAMPLING CONTROL APPLICATION
 %Test descrete sampling rate of data (eg: position data provided at rate of
 %~10-15ms, so control value does not get updated until new data is recieved)
-% if qsim.t_loop >= quad.sample_rate
-%     u(:,t) = u(:,t);
-%     temp_control = u(:,t);
-%     qsim.t_loop = 0;
-% else
-%     u(:,t) = temp_control;
-% end
-% qsim.t_loop = qsim.t_loop + qsim.dt;
-% u(:,t)
+if qsim.t_loop >= quad.sample_rate
+    u(:,t) = u(:,t);
+    temp_control = u(:,t);
+    qsim.t_loop = 0;
+else
+    u(:,t) = temp_control;
+end
+qsim.t_loop = qsim.t_loop + qsim.dt;
+u(:,t)
 
 %Forward Euler approx of position/rotation, q(t+1) = q(t) + dt*q'(t)
 %Linearized
