@@ -10,19 +10,19 @@ QR_LQR = struct;
 noise  = struct;
 
 %Quadrotor definitions
-quad.m = 0.11;  %kg
-quad.d = 55;    %mm 
-quad.a = 75;    %mm
-quad.h = 5;
-quad.w = 50; 
+quad.m = 0.11;  %mass of QR in kg
+quad.d = 55;    %distance from COM to axis connecting motors in mm 
+quad.a = 75;    %distance to each motor in mm
+quad.h = 10;     %approximate mass moment of inertia height of QR in mm
+quad.w = 55;    %approximate mass moment of inertia width
 quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
-quad.sample_rate = 0.006; %s
+quad.sample_rate = 0.02; %Sample rate of controller in s
 
 %Simulation Parameters
 qsim.g = 9810;  %mm/s^2
-qsim.tmax = 25;
+qsim.tmax = 10;
 qsim.dt = 0.001;
 qsim.N = qsim.tmax/qsim.dt;
 qsim.t_loop = 0;
@@ -122,14 +122,22 @@ H = [eye(3)*noise.pos_measurement, zeros(3,9);
 %k_lqr is found such that u* = k_lqr*x(t)
 
 %Initialize P = Qf, which is 1.
-QR_LQR.Q = C'*C*2;
+QR_LQR.Q = C'*C*0.05;
 QR_LQR.P = QR_LQR.Q;
-QR_LQR.R = eye(4)*0.05;
+QR_LQR.R = eye(4)*1;
 
 %Import LQR values (note: discrete time ricatti is in the loop)
 Q = QR_LQR.Q;
 P = QR_LQR.P;
 R = QR_LQR.R;
+% for i = 0:50
+%     P = Ad'*P*Ad-(Ad'*P*Bd)*inv(R+Bd'*P*Bd)*(Bd'*P*Ad) + Q;
+% end
+%K = inv(R+Bd'*P*Bd)*Bd'*P*Ad;
+
+%Descrete time LQR function for Continuous Plant Dyanamics
+[K P e] = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
+%eig(A(q(:,1),u(:,1))-B(q(:,1))*K)
 
 %% Rotational PID controller Parameters
 %Current Parameters on QR
@@ -167,9 +175,10 @@ omega = 0.075;
 r = 0.5;
 
 %Max linearized motor commands allowed
-mmax = 1900;
+%mmax = 1900;
+%mmin = 1000;
+mmax = 2000;
 mmin = 1000;
-
 
 %% System Response
 for t = 1:qsim.N-1
@@ -178,20 +187,20 @@ for t = 1:qsim.N-1
 %des(1:3,t) = [r*cos(dt*t*omega);r*sin(dt*t*omega);1.0]*1000;
 
 %Cork-screw
-des(1:3,t) = [r*0.05*dt*t*cos(dt*t*omega);r*0.05*dt*t*sin(dt*t*omega);0.015*dt*t]*1000;
+%des(1:3,t) = [r*0.05*dt*t*cos(dt*t*omega);r*0.05*dt*t*sin(dt*t*omega);0.015*dt*t]*1000;
 
 %Straight Path
 %des(1:3,t) = [0.025*dt*t; 0.05*dt*t; 0.025*dt*t]*1000;
 
-% %Triangle
-% des(1:3,t) = [0.0025*dt*t; 0.005*dt*t; 0.025*dt*t]*1000;    
-% if t > N/4 && t <= N/2
-%   des(1:3,t) = des(1:3,round(N/4)) + [0.075*dt*(t-N/4); 0; 0]*1000;  
-% elseif t > N/2 && t <= 3*N/4
-%   des(1:3,t) = des(1:3,round(N/2)) + [0; -0.075*dt*(t-N/2); 0]*1000;  
-% elseif t > 3*N/4
-%   des(1:3,t) = des(1:3,round(3*N/4)) + [-0.075*dt*(t-3*N/4); 0.075*dt*(t-3*N/4); 0]*1000;
-% end
+%Triangle
+des(1:3,t) = [0.0025*dt*t; 0.005*dt*t; 0.025*dt*t]*1000;    
+if t > N/4 && t <= N/2
+  des(1:3,t) = des(1:3,round(N/4)) + [0.075*dt*(t-N/4); 0; 0]*1000;  
+elseif t > N/2 && t <= 3*N/4
+  des(1:3,t) = des(1:3,round(N/2)) + [0; -0.075*dt*(t-N/2); 0]*1000;  
+elseif t > 3*N/4
+  des(1:3,t) = des(1:3,round(3*N/4)) + [-0.075*dt*(t-3*N/4); 0.075*dt*(t-3*N/4); 0]*1000;
+end
 
 %Ends flight path preemptively and QR is supposed to stop at point, allows inspection 
 if t > 3*N/4
@@ -271,39 +280,37 @@ for i = 1:3
     end
 end
 
-%Apply motor commands 
-m1 =  C_r(1,1) - C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
-m2 = -C_r(1,1) - C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
-m3 =  C_r(1,1) + C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
-m4 = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
+%Apply motor commands for PID (if LQR is enable, these will be overwritten)
+mot(1,t) =  C_r(1,1) - C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
+mot(2,t) = -C_r(1,1) - C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
+mot(3,t) =  C_r(1,1) + C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
+mot(4,t) = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
 
 
-%DISCRETE TIME RICCATI RECURSION
-P = Ad'*P*Ad-(Ad'*P*Bd)*inv(R+Bd'*P*Bd)*(Bd'*P*Ad) + Q;
-K = -inv(R+Bd'*P*Bd)*Bd'*P*Ad;
+%DISCRETE TIME RICCATI RECURSION (updates at sample rate)
+% if qsim.t_loop >= quad.sample_rate
+%     [K P e] = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
+% end
 
 % %APPLY LQR CONTROL
-u(:,t) = K*(q(:,t)-des(:,t));
-
-%Convert thrust to motor speed command (LQR ONLY )
-m1 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(1,t)*4/1000)))/(2*(2.3159e-6));
-m2 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(2,t)*4/1000)))/(2*(2.3159e-6));
-m3 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(3,t)*4/1000)))/(2*(2.3159e-6));
-m4 = real((3.5209e-3) + sqrt((3.5209e-3)^2 + 4*(2.3159e-6)*(-1.2079+u(4,t)*4/1000)))/(2*(2.3159e-6));
-
-%Rounding the motor command values to the nearest integer value
-m1 = round(m1)+hover;
-m2 = round(m2)+hover;
-m3 = round(m3)+hover;
-m4 = round(m4)+hover;
-mot(:,t) = [m1;m2;m3;m4];
-
-%Convert motor speeds to applied thrusts
-%(note: this is done for LQR as well to account for rounding error in the
-%motor speed value)
+u(:,t) = -K*(q(:,t)-des(:,t));
 
 %Bound the control values to actual control range (1000us-1900us)
 for i = 1:4
+   %Shift each control thrust input to hover thrust range (mg/4 per motor)
+   u(i,t) = u(i,t) + quad.m*qsim.g/4;
+   
+   %Convert motor speeds to applied thrusts
+   %(note: this is done for LQR as well to account for rounding error in the
+   %motor speed value)
+   %(note: the conversion is actually for the force measured from all four
+   %motors running at that uS pulse. So the individual forces are
+   %multiplied by 4, then converted to N)
+   mot(i,t) = -193.51*(u(i,t)*4/1000)^2 + 640.42*(u(i,t)*4/1000) + 1011.5;
+   
+   %Round to simulate integer conversion on QR
+   mot(i,t) = round(mot(i,t));
+   
    %Since the max operating range of the command pulse is 1000-1900, the
    %linearized QR dynamics has the command pulse set to ~460. So we shift
    %down the max and min values to account for this.
@@ -313,7 +320,7 @@ for i = 1:4
        mot(i,t) = mmin;
    end
 
-   %Convert motor command back to a force
+   %Convert motor command back to a force (kg*mm/s^2
    u(i,t) = 1000*((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
 end
 
@@ -321,14 +328,12 @@ end
 %Test descrete sampling rate of data (eg: position data provided at rate of
 %~10-15ms, so control value does not get updated until new data is recieved)
 if qsim.t_loop >= quad.sample_rate
-    u(:,t) = u(:,t);
     temp_control = u(:,t);
     qsim.t_loop = 0;
 else
     u(:,t) = temp_control;
 end
 qsim.t_loop = qsim.t_loop + qsim.dt;
-%u(:,t)
 
 %Non-linear Dynamics (Noise and Noise-less Available)
 %Note these are note discrete as the real system is continuous by nature.
