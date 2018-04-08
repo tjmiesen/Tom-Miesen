@@ -13,16 +13,15 @@ noise  = struct;
 quad.m = 0.11;  %kg
 quad.d = 55;    %mm 
 quad.a = 75;    %mm
-quad.h = 5;
-quad.w = 50; 
+quad.h = 10;
+quad.w = 55; 
 quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
-quad.sample_rate = 0.02; %s
 
 %Simulation Parameters
 qsim.g = 9810;  %mm/s^2
-qsim.tmax = 10;
+qsim.tmax = 25;
 qsim.dt = 0.001;
 qsim.N = qsim.tmax/qsim.dt;
 qsim.t_loop = 0;
@@ -32,8 +31,6 @@ tmax = qsim.tmax;
 N = qsim.N;
 
 %Variable Init
-temp_control = quad.sample_rate;
-%temp_control = 0;
 u =     zeros(4, qsim.N); %Postion control inputs
 q =     zeros(12, qsim.N); %state
 y =     zeros(9, qsim.N); %Output
@@ -73,6 +70,12 @@ B = @(q)    [0 0 0 0; %x                 1
             -quad.d/(quad.Iy)*cos(q(5,1))*cos(q(4,1)) -quad.d/(quad.Iy)*cos(q(5,1))*cos(q(4,1)) quad.d/(quad.Iy)*cos(q(5,1))*cos(q(4,1))  quad.d/(quad.Iy)*cos(q(5,1))*cos(q(4,1)); %Vp  11
             -quad.a/quad.Iz quad.a/quad.Iz quad.a/quad.Iz -quad.a/quad.Iz];         %Vya 12
 
+        
+
+%Sanity check of A and B matricies
+%A(q,u)
+%B(q)
+        
 %Output matrix, since we only can acquire Position attitude and angle
 %Should be a 9x12
 C = [1 0 0 0 0 0 0 0 0 0 0 0;
@@ -101,11 +104,9 @@ F = [eye(3)*noise.pos, zeros(3,9);
      zeros(3,6), eye(3)*noise.vel, zeros(3,3);
      zeros(3,9), eye(3)*noise.ang_vel];
 
-%Determine Discrete Time System
-sys = ss(A(q(:,1),u(:,1)),B(q(:,1)),C,0);
-sysd = c2d(sys,quad.sample_rate);
-Ad = sysd.a;
-Bd = sysd.b;
+%Testing fixed linearized A and B matricies
+A_fixed = A(q(:,1),u(:,1));
+B_fixed = B(q(:,1));
 
 %Measurement Noise Matrix Definitions
 noise.pos_measurement = 0.05;
@@ -122,22 +123,24 @@ H = [eye(3)*noise.pos_measurement, zeros(3,9);
 %k_lqr is found such that u* = k_lqr*x(t)
 
 %Initialize P = Qf, which is 1.
-QR_LQR.Q = C'*C*0.15;
+QR_LQR.Q = C'*C*2;
 QR_LQR.P = QR_LQR.Q;
-QR_LQR.R = eye(4)*1;
+QR_LQR.R = eye(4)*0.05;
+QR_LQR.h = 0.001;
 
-%Import LQR values (note: discrete time ricatti is in the loop)
+%Import LQR values
 Q = QR_LQR.Q;
 P = QR_LQR.P;
 R = QR_LQR.R;
-% for i = 0:50
-%     P = Ad'*P*Ad-(Ad'*P*Bd)*inv(R+Bd'*P*Bd)*(Bd'*P*Ad) + Q;
-% end
-%K = inv(R+Bd'*P*Bd)*Bd'*P*Ad;
+h = QR_LQR.h;
+for i=1:100
+    %Riccati Recursion
+    P = P + h*(Q+P*A(q(:,1),u(:,1))+A(q(:,1),u(:,1))'*P-P*B(q(:,1))*inv(R)*B(q(:,1))'*P);  %Pt = Pt+h - dt*dPdt
+end
 
-%Descrete time LQR function for Continuous Plant Dyanamics
-[K P e] = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-%eig(A(q(:,1),u(:,1))-B(q(:,1))*K)
+%Derived that optimal state feedback gain for cost function
+%Linearized
+K = inv(R)*B(q(:,1))'*P;
 
 %% Rotational PID controller Parameters
 %Current Parameters on QR
@@ -168,17 +171,16 @@ kdz = 1.0;
 K_pid_z = [kpz+kdz/dt -kdz/dt kiz];
 iz = 0;
 zmax = 50;
-hover = 480;
+hover = 460;
 
 %Trajectory Parameters
 omega = 0.075;
 r = 0.5;
 
 %Max linearized motor commands allowed
-%mmax = 1900;
-%mmin = 1000;
-mmax = 2000;
+mmax = 1900;
 mmin = 1000;
+
 
 %% System Response
 for t = 1:qsim.N-1
@@ -280,20 +282,33 @@ for i = 1:3
     end
 end
 
-%Apply motor commands for PID (if LQR is enable, these will be overwritten)
-mot(1,t) =  C_r(1,1) - C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
-mot(2,t) = -C_r(1,1) - C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
-mot(3,t) =  C_r(1,1) + C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
-mot(4,t) = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
+%Apply motor commands 
+m1 =  C_r(1,1) - C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
+m2 = -C_r(1,1) - C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
+m3 =  C_r(1,1) + C_r(1,2) + C_r(1,3) + 1000 + C_p(1,3);
+m4 = -C_r(1,1) + C_r(1,2) - C_r(1,3) + 1000 + C_p(1,3);
 
+%Rounding the motor command values to the nearest integer value
+m1 = round(m1)+hover;
+m2 = round(m2)+hover;
+m3 = round(m3)+hover;
+m4 = round(m4)+hover;
+mot(:,t) = [m1;m2;m3;m4];
 
-%DISCRETE TIME RICCATI RECURSION (updates at sample rate)
-% if qsim.t_loop >= quad.sample_rate
-%     [K P e] = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% end
+% %LQR CONTROL RECURSION (State-dependent A and B)
+% P = P + QR_LQR.h*(Q+P*A(q(:,t),u(:,t))+A(q(:,t),u(:,t))'*P-P*B(q(:,t))*inv(R)*B(q(:,t))'*P);  %Pt = Pt+h - dt*dPdt
+% K = inv(R)*B(q(:,t))'*P;
+
+% %LQR CONTROL RECURSION (Fixed-dependent A and B)
+% P = P + QR_LQR.h*(Q+P*A_fixed+A_fixed'*P-P*B_fixed*inv(R)*B_fixed'*P);  %Pt = Pt+h - dt*dPdt
+% K = inv(R)*B_fixed'*P;
 
 % %APPLY LQR CONTROL
 u(:,t) = -K*(q(:,t)-des(:,t));
+
+%Convert motor speeds to applied thrusts
+%(note: this is done for LQR as well to account for rounding error in the
+%motor speed value)
 
 %Bound the control values to actual control range (1000us-1900us)
 for i = 1:4
@@ -307,6 +322,8 @@ for i = 1:4
    %motors running at that uS pulse. So the individual forces are
    %multiplied by 4, then converted to N)
    mot(i,t) = -193.51*(u(i,t)*4/1000)^2 + 640.42*(u(i,t)*4/1000) + 1011.5;
+   
+   %Round to simulate integer conversion on QR
    mot(i,t) = round(mot(i,t));
    
    %Since the max operating range of the command pulse is 1000-1900, the
@@ -322,19 +339,11 @@ for i = 1:4
    u(i,t) = 1000*((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
 end
 
-%DESCRETE SAMPLING CONTROL APPLICATION
-%Test descrete sampling rate of data (eg: position data provided at rate of
-%~10-15ms, so control value does not get updated until new data is recieved)
-if qsim.t_loop >= quad.sample_rate
-    temp_control = u(:,t);
-    qsim.t_loop = 0;
-else
-    u(:,t) = temp_control;
-end
-qsim.t_loop = qsim.t_loop + qsim.dt;
+%Forward Euler approx of position/rotation, q(t+1) = q(t) + dt*q'(t)
+%Linearized
+%q(:,t+1) = q(:,t) + dt*(A(q,u)*q(:,t)+B(q)*u(:,t));
 
 %Non-linear Dynamics (Noise and Noise-less Available)
-%Note these are note discrete as the real system is continuous by nature.
 q(:,t+1) = QR_NL_Dyn((q(:,t)),u(:,t),quad,qsim);
 %q(:,t+1) = QR_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
 
