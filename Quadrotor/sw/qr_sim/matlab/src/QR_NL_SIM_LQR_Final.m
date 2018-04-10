@@ -20,21 +20,36 @@ quad.C_yaw = tan(quad.bladepitch); %approximate conversion of thrust per motor t
 quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
-quad.sample_rate = 0.02; %Sample rate of controller in s
+quad.controller_update_rate = 0.007; %Sample rate of microcontroller in s (~7ms)
+quad.pos_sample_rate = 0.02; %sample rate of position/vel sensor
+quad.rot_sample_rate = 0.01; %sample rate of rotational/rate sensor
+
+quad.desired_position = [1000; 1000; 1500]; %Sets a desired position for the trajectory planning algorithm.
+quad.previous_desired_position = [0;0;0];
+quad.max_velocity = 250; %velocity on each axis: 500mm/s appears to be good
 
 %Simulation Parameters
 qsim.g = 9810;  %mm/s^2
-qsim.tmax = 50;
-qsim.dt = 0.01; %simulation dt in s (NOTE: 10ms is ONLY for to speed up the SETUP process)
+qsim.tmax = 10;
+qsim.dt = 0.001; %simulation dt in s (NOTE: 10ms is ONLY for to speed up the SETUP process)
 qsim.N = qsim.tmax/qsim.dt;
 qsim.t_loop = 0;
+qsim.t_loop_pos = 0;
+qsim.t_loop_rot = 0;
 
 dt = qsim.dt;
 tmax = qsim.tmax;
 N = qsim.N;
 
 %Variable Init
-temp_control = quad.sample_rate;
+temp_control = 0;
+temp_motor = 1000;
+temp_pos = [0;0;0];
+temp_vel = [0;0;0];
+temp_rot = [0;0;0];
+temp_ang = [0;0;0];
+
+
 %temp_control = 0;
 u =     zeros(4, qsim.N); %Postion control inputs
 q =     zeros(12, qsim.N); %state
@@ -84,7 +99,7 @@ C = [1 0 0 0 0 0 0 0 0 0 0 0;
 
 %State Noise Matrix Definitions
 noise.pos = 1.0;
-noise.rot = 0.01*pi()/180;
+noise.rot = 0.1*pi()/180;
 noise.vel = 0;
 noise.ang_vel = 0.01;
 
@@ -120,9 +135,11 @@ H = [eye(3)*noise.pos_measurement, zeros(3,9);
 
 %Initialize P = Qf, which is 1.
 QR_LQR.Q = C'*C*0.05;
-QR_LQR.Q(4:6,4:6) = eye(3)*5;
+QR_LQR.Q(4:5,4:5) = eye(2)*1;
+QR_LQR.Q(6,6) = 20;
+QR_LQR.Q(12,12) = 5;
 QR_LQR.P = QR_LQR.Q;
-QR_LQR.R = eye(4)*1;
+QR_LQR.R = eye(4)*10;
 
 %Import LQR values (note: discrete time ricatti is in the loop)
 Q = QR_LQR.Q;
@@ -130,23 +147,9 @@ P = QR_LQR.P;
 R = QR_LQR.R;
 
 %Descrete time LQR function for Continuous Plant Dyanamics
-K_lqr = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
+K_lqr = lqrd(A(q(:,1),u(:,1)),B(q(:,1)),Q,R,quad.pos_sample_rate);
 K = K_lqr;
 Pd = P;
-
-%Pre-determine LQR gains for various Yaw Angles. Simulation suggests that
-%these gains are stable for a +/- 12 deg. So have partitioned them up into
-%quadrants.
-% [K22p P e] = lqrd(A([q(1:5,1);22.5*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K45p P e] = lqrd(A([q(1:5,1);45*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K67p P e] = lqrd(A([q(1:5,1);67.5*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K90p P e] = lqrd(A([q(1:5,1);90*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% 
-% [K22n P e] = lqrd(A([q(1:5,1);-22.5*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K45n P e] = lqrd(A([q(1:5,1);-45*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K67n P e] = lqrd(A([q(1:5,1);-67.5*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-% [K90n P e] = lqrd(A([q(1:5,1);-90*pi()/180;q(7:12,1)],u(:,1)),B(q(:,1)),Q,R,quad.sample_rate);
-
 
 %Trajectory Parameters
 omega = 0.075;
@@ -156,72 +159,105 @@ r = 0.5;
 mmax = 2000;
 mmin = 1000;
 
+%q(5,1) = 5*pi()/180;
+
 %% System Response
 for t = 1:qsim.N-1
-%% Trajectory Generation
-%Circular Path
-%des(1:3,t) = [r*cos(dt*t*omega);r*sin(dt*t*omega);1.0]*1000;
+%% Sensor data import
 
+%Update pos and Rot values at set rates
+if (qsim.t_loop_pos >= quad.pos_sample_rate)
+    temp_pos = q(1:3,t);
+    %temp_vel = q(7:9,t);
+    
+    %Approximate the velocity by finite difference
+    %temp_vel = (q(1:3,t)-q(1:3,t-1))/quad.pos_sample_rate;    %simulate velocity estimation
+    %Approx averaging the derivative from 3 points back
+    %temp_vel = 1/3*(q(1:3,t)-q(1:3,t-1)+q(1:3,t)-q(1:3,t-2)+q(1:3,t)-q(1:3,t-3))/quad.pos_sample_rate;
+    %Approx averaging the derivative from 4 points back
+    %temp_vel = 1/4*((q(1:3,t)-q(1:3,t-1))+(q(1:3,t)-q(1:3,t-2))+(q(1:3,t)-q(1:3,t-3))+(q(1:3,t)-q(1:3,t-4)))/quad.pos_sample_rate;
+    %Approx averaging the derivative from 5 points back
+    temp_vel = 1/5*(5*q(1:3,t)-q(1:3,t-1)-q(1:3,t-2)-q(1:3,t-3)-q(1:3,t-4)-q(1:3,t-5))/quad.pos_sample_rate;
+    
+    qsim.t_loop_pos = 0;
+end
+if qsim.t_loop_rot >= quad.rot_sample_rate
+    temp_rot = q(4:6,t);
+    temp_ang = q(10:12,t);
+    qsim.t_loop_rot = 0;
+end
+qsim.t_loop_pos = qsim.t_loop_pos + qsim.dt;
+qsim.t_loop_rot = qsim.t_loop_rot + qsim.dt;
+
+    
+%% Trajectory Generation
 %Cork-screw
-des(1:3,t) = [r*0.05*dt*t*cos(dt*t*omega);r*0.05*dt*t*sin(dt*t*omega);0.015*dt*t]*1000;
+%des(1:3,t) = [r*0.5*dt*t*cos(dt*t*omega);r*0.5*dt*t*sin(dt*t*omega);0.15*dt*t]*1000;
 
 %Test setting a desired yaw
-des(6,t) = 2*dt*t*pi()/180;
+des(6,t) = 10*dt*t*pi()/180;
 
-%Straight Path
-%des(1:3,t) = [0.025*dt*t; 0.05*dt*t; 0.025*dt*t]*1000;
- 
-% %Triangle
-% des(1:3,t) = [0.0025*dt*t; 0.005*dt*t; 0.025*dt*t]*1000;    
-% if t > N/4 && t <= N/2
-%   des(1:3,t) = des(1:3,round(N/4)) + [0.075*dt*(t-N/4); 0; 0]*1000;  
+%Desired location, with simply linear trajectory planning
+if qsim.t_loop >= quad.controller_update_rate
+    des(1:3,t) = QR_LinearTrajectory(temp_pos, quad.desired_position, quad.previous_desired_position, quad.max_velocity, quad.controller_update_rate);
+    quad.previous_desired_position = des(1:3,t);
+else
+    if (t>1)
+        des(1:3,t) = quad.previous_desired_position;
+    end
+end
+
+%Switch desired locations mid-flight to test response    
+if t > N/4 && t <= N/2
+  quad.desired_position = [1000; -1000; 1500];  
 % elseif t > N/2 && t <= 3*N/4
-%   des(1:3,t) = des(1:3,round(N/2)) + [0; -0.075*dt*(t-N/2); 0]*1000;  
+%   quad.desired_position = [-1000; -1000; 1500];  
 % elseif t > 3*N/4
-%   des(1:3,t) = des(1:3,round(3*N/4)) + [-0.075*dt*(t-3*N/4); 0.075*dt*(t-3*N/4); 0]*1000;
-% end
+%  quad.desired_position = [1000; 1000; 1500];
+end
 
-% %Ends flight path preemptively and QR is supposed to stop at point, allows inspection 
-%  if t > 3*N/4
-%    des(1:3,t) = des(1:3,t-1);  
-%    %Test setting desired yaw back to 0
-%    des(6,t) = des(6,t-1)*0.75;
-% 
-%  end
+%Ends flight path preemptively and QR is supposed to stop at point
+if t > 6/dt
+  des(1:3,t) = des(1:3,t-1); 
+  quad.previous_desired_position = des(1:3,t-1);
+end
+
+%% Test momentary GPS communication loss (0.25s) 
+if (t > 5.0/dt && t < 5.25/dt)
+    temp_pos = loss_temp_pos;   %Position is now the last known
+    temp_vel = loss_temp_vel;   %Velocity is now the last known
+    des(1:3,t) = l_des;         %Trajectory path is now last known
+    
+                                %(Setting to lost position value will cause
+                                %a controller reaction which is expecting a
+                                %position and velocity update, so leaving
+                                %the desired value the same allows the
+                                %controller to maintain a more stable
+                                %response for the drop-out period)
+else
+    loss_temp_pos = temp_pos;
+    loss_temp_vel = temp_vel;
+    l_des = des(1:3,t);
+end
 
 %% Control Inputs
 % %APPLY LQR CONTROL
-%Re-orient the optimal LQR gain to the QR current yaw angle
-K = [ K_lqr(1,1)*(cos(q(6,t))-sin(q(6,t))), K_lqr(1,2)*(cos(q(6,t))+sin(q(6,t)))     ,K_lqr(1,3:6),      K_lqr(1,7)*(cos(q(6,t))-sin(q(6,t))), K_lqr(1,8)*(cos(q(6,t))+sin(q(6,t))),        K_lqr(1,9:12);
-      K_lqr(2,1)*(cos(q(6,t))+sin(q(6,t))), K_lqr(2,2)*(cos(q(6,t))-sin(q(6,t)))     ,K_lqr(2,3:6),      K_lqr(2,7)*(cos(q(6,t))+sin(q(6,t))), K_lqr(2,8)*(cos(q(6,t))-sin(q(6,t))),        K_lqr(2,9:12);
-      K_lqr(3,1)*(cos(q(6,t))+sin(q(6,t))), K_lqr(3,2)*(cos(q(6,t))-sin(q(6,t)))     ,K_lqr(3,3:6),      K_lqr(3,7)*(cos(q(6,t))+sin(q(6,t))), K_lqr(3,8)*(cos(q(6,t))-sin(q(6,t))),        K_lqr(3,9:12);
-      K_lqr(4,1)*(cos(q(6,t))-sin(q(6,t))), K_lqr(4,2)*(cos(q(6,t))+sin(q(6,t)))     ,K_lqr(4,3:6),      K_lqr(4,7)*(cos(q(6,t))-sin(q(6,t))), K_lqr(4,8)*(cos(q(6,t))+sin(q(6,t))),        K_lqr(4,9:12)];
-u(:,t) = -K*(q(:,t)-des(:,t));
+%Re-orient the optimal LQR gain to the QR measured yaw angle
+K = [ K_lqr(1,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(1,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(1,3:6),      K_lqr(1,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(1,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(1,9:12);
+      K_lqr(2,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(2,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(2,3:6),      K_lqr(2,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(2,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(2,9:12);
+      K_lqr(3,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(3,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(3,3:6),      K_lqr(3,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(3,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(3,9:12);
+      K_lqr(4,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(4,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(4,3:6),      K_lqr(4,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(4,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(4,9:12)];
 
+%Control value based off measured values (which are each dependent on their
+%own sample rates.
+u(:,t) = -K*([temp_pos; temp_rot; temp_vel; temp_ang] - des(:,t));
+%u(:,t) = -K*(q(:,t)-des(:,t));
 
-%Yaw-Specific LQR Control (Increments of 22.5 deg)
-% if(q(6,t) < 11.25*pi()/180 && q(6,t)> -11.25*pi()/180)
-%     u(:,t) = -K*(q(:,t)-des(:,t));
-% elseif(q(6,t)< 33.75*pi()/180 && q(6,t)>= 11.25*pi()/180)
-%     u(:,t) = -K22p*(q(:,t)-des(:,t));
-% elseif(q(6,t)< 56.25*pi()/180 && q(6,t)>= 33.75*pi()/180)
-%     u(:,t) = -K45p*(q(:,t)-des(:,t));
-% elseif(q(6,t)< 78.75*pi()/180 && q(6,t)>= 56.25*pi()/180)
-%     u(:,t) = -K67p*(q(:,t)-des(:,t));
-% elseif(q(6,t)< 101.25*pi()/180 && q(6,t)>= 78.75*pi()/180)
-%     u(:,t) = -K90p*(q(:,t)-des(:,t));
-%     
-% elseif(q(6,t)> -33.75*pi()/180 && q(6,t)<= -11.25*pi()/180)
-%     u(:,t) = -K22n*(q(:,t)-des(:,t));
-% elseif(q(6,t)> -56.25*pi()/180 && q(6,t)<= -33.75*pi()/180)
-%     u(:,t) = -K45n*(q(:,t)-des(:,t));
-% elseif(q(6,t)> -78.75*pi()/180 && q(6,t)<= -56.25*pi()/180)
-%     u(:,t) = -K67n*(q(:,t)-des(:,t));
-% elseif(q(6,t)> -101.25*pi()/180 && q(6,t)<= -78.75*pi()/180)
-%     u(:,t) = -K90n*(q(:,t)-des(:,t));
-% end
+%Bound the control values to actual control range (1000us-2000us) and
+%convert back to force to account for rounding errors.
 
-%Bound the control values to actual control range (1000us-1900us)
+%(Uniform) Motor Pulse Noise from Interrupts (+0-14us)
+motor_pulse_noise = round(7+7*randn(1,1));
 for i = 1:4
    %Shift each control thrust input to hover thrust range (mg/4 per motor)
    u(i,t) = u(i,t) + quad.m*qsim.g/4;
@@ -246,19 +282,26 @@ for i = 1:4
    elseif mot(i,t) < mmin
        mot(i,t) = mmin;
    end
-
+   
+   %Simulate uS pulse legnth noise from interrupt subroutines
+   %Currently modeled as simple variable offset
+   mot(i,t) = mot(i,t) + motor_pulse_noise;
+   %mot(i,t) = mot(i,t) + motor_noise + sound;
+   
    %Convert motor command back to a force (kg*mm/s^2
    u(i,t) = 1000*((2.3159e-6)*mot(i,t)^2 - (3.5209e-3)*mot(i,t) + 1.2079)/4;
 end
 
 %DESCRETE SAMPLING CONTROL APPLICATION
-%Test descrete sampling rate of data (eg: position data provided at rate of
-%~10-15ms, so control value does not get updated until new data is recieved)
-if qsim.t_loop >= quad.sample_rate
+%Applies controls at the update rate of the physical control loop.
+%Note that this is independent of the sampling rates of the sensors.
+if qsim.t_loop >= quad.controller_update_rate
     temp_control = u(:,t);
+    temp_motor = mot(:,t);
     qsim.t_loop = 0;
 else
     u(:,t) = temp_control;
+    mot(:,t) = temp_motor;
 end
 qsim.t_loop = qsim.t_loop + qsim.dt;
 
@@ -270,7 +313,6 @@ q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)),u(:,t),quad,qsim);
 y(:,t) = C*q(:,t);
 %y(:,t) = C*q(:,t)+H*randn(12,1);
 end
-
 
 %Plot state dynamics
 figure
