@@ -81,8 +81,8 @@ B = @(q)    [0 0 0 0; %x                 1
              0 0 0 0; %Vx                7
              0 0 0 0; %Vy                8
              1/(quad.m) 1/(quad.m) 1/(quad.m) 1/(quad.m);       %Vz  9
-             quad.d/(quad.Ix) -quad.d/(quad.Ix) quad.d/(quad.Ix) -quad.d/(quad.Ix); %Vr  10
-            -quad.d/(quad.Iy) -quad.d/(quad.Iy) quad.d/(quad.Iy)  quad.d/(quad.Iy); %Vp  11
+            -quad.d/(quad.Ix)  quad.d/(quad.Ix) -quad.d/(quad.Ix) quad.d/(quad.Ix); %Vr  10
+            -quad.d/(quad.Iy) -quad.d/(quad.Iy)  quad.d/(quad.Iy) quad.d/(quad.Iy); %Vp  11
             -quad.a/quad.Iz quad.a/quad.Iz quad.a/quad.Iz -quad.a/quad.Iz];         %Vya 12
 
 %Output matrix, since we only can acquire Position attitude and angle
@@ -240,10 +240,10 @@ end
 %% Control Inputs
 % %APPLY LQR CONTROL
 %Re-orient the optimal LQR gain to the QR measured yaw angle
-K = [ K_lqr(1,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(1,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(1,3:6),      K_lqr(1,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(1,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(1,9:12);
-      K_lqr(2,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(2,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(2,3:6),      K_lqr(2,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(2,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(2,9:12);
-      K_lqr(3,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(3,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(3,3:6),      K_lqr(3,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(3,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(3,9:12);
-      K_lqr(4,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(4,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(4,3:6),      K_lqr(4,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(4,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(4,9:12)];
+K = [ K_lqr(1,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(1,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(1,3:6),      K_lqr(1,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(1,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(1,9:12);
+      K_lqr(2,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(2,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(2,3:6),      K_lqr(2,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(2,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(2,9:12);
+      K_lqr(3,1)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(3,2)*(cos(temp_rot(3,1))+sin(temp_rot(3,1)))     ,K_lqr(3,3:6),      K_lqr(3,7)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))), K_lqr(3,8)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))),        K_lqr(3,9:12);
+      K_lqr(4,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(4,2)*(cos(temp_rot(3,1))-sin(temp_rot(3,1)))     ,K_lqr(4,3:6),      K_lqr(4,7)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(4,8)*(cos(temp_rot(3,1))-sin(temp_rot(3,1))),        K_lqr(4,9:12)];
 
 %Control value based off measured values (which are each dependent on their
 %own sample rates.
@@ -254,7 +254,9 @@ u(:,t) = -K*([temp_pos; temp_rot; temp_vel; temp_ang] - des(:,t));
 %convert back to force to account for rounding errors.
 
 %(Uniform) Motor Pulse Noise from Interrupts (+0-14us)
-motor_pulse_noise = round(7+7*randn(1,1));
+motor_pulse_noise = round(10+15*randn(1,1));
+%motor_pulse_noise = round(7+7*randn(1,1));
+%motor_pulse_noise = round(3+15*randn(1,1));
 for i = 1:4
    %Shift each control thrust input to hover thrust range (mg/4 per motor)
    u(i,t) = u(i,t) + quad.m*qsim.g/4;
@@ -325,6 +327,13 @@ qsim.t_loop = qsim.t_loop + qsim.dt;
 q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
 end
 
+K_lqr(1,12)
+K_lqr(1,12)*pi()/180.00
+
+K_lqr(1,10)
+K_lqr(1,10)*pi()/180.00
+
+
 %Plot state dynamics
 figure
 [m,n] = size(q);
@@ -342,6 +351,15 @@ ylabel('Rotation Output')
 legend('R','P','Yaw')
 title('Rotational Dynamics (deg)')
 ylim([-180 180])
+
+%Plot rot rate dynamics
+figure
+plot((1:n-1)*dt, y(7:9,1:n-1)*180/pi())
+xlabel('Time')
+ylabel('Rotational Rate Output')
+legend('wR','wP','wYaw')
+title('Rotational Rate Dynamics (deg/s)')
+
 
 %Plot controls
 figure

@@ -18,7 +18,7 @@ position = q(1:3,1) + dt*velocity + 0.5*dt*dt*accel(q(:,1),u(:,1));
 f_roll = @(u) u(1,1)-u(2,1)+u(3,1)-u(4,1);
 f_pitch = @(u) -u(1,1)-u(2,1)+u(3,1)+u(4,1);
 f_yaw = @(u) -u(1,1)+u(2,1)+u(3,1)-u(4,1);
-ang_accel =    @(q,u)  [quad.d/quad.Iy*(u(1,1)-u(2,1)+u(3,1)-u(4,1))*cos(q(4,1))*cos(q(5,1));
+ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
                         quad.C_yaw*quad.a/quad.Iz*(-u(1,1)+u(2,1)+u(3,1)-u(4,1))*cos(q(4,1))*cos(q(5,1))];
  
