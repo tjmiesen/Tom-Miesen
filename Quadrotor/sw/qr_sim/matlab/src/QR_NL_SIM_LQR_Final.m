@@ -83,7 +83,7 @@ B = @(q)    [0 0 0 0; %x                 1
              1/(quad.m) 1/(quad.m) 1/(quad.m) 1/(quad.m);       %Vz  9
             -quad.d/(quad.Ix)  quad.d/(quad.Ix) -quad.d/(quad.Ix) quad.d/(quad.Ix); %Vr  10
             -quad.d/(quad.Iy) -quad.d/(quad.Iy)  quad.d/(quad.Iy) quad.d/(quad.Iy); %Vp  11
-            -quad.a/quad.Iz quad.a/quad.Iz quad.a/quad.Iz -quad.a/quad.Iz];         %Vya 12
+             quad.a/quad.Iz   -quad.a/quad.Iz   -quad.a/quad.Iz   quad.a/quad.Iz];         %Vya 12
 
 %Output matrix, since we only can acquire Position attitude and angle
 %Should be a 9x12
@@ -326,12 +326,6 @@ qsim.t_loop = qsim.t_loop + qsim.dt;
 %q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)),u(:,t),quad,qsim);
 q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
 end
-
-K_lqr(1,12)
-K_lqr(1,12)*pi()/180.00
-
-K_lqr(1,10)
-K_lqr(1,10)*pi()/180.00
 
 
 %Plot state dynamics

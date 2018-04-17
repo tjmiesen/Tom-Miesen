@@ -14,9 +14,9 @@ velocity = q(7:9,1) + dt*accel(q(:,1),u(:,1));
 position = q(1:3,1) + dt*velocity + 0.5*dt*dt*accel(q(:,1),u(:,1));
 
 %% Rotational
-ang_accel =    @(q,u)  [quad.d/quad.Iy*(u(1,1)-u(2,1)+u(3,1)-u(4,1))*cos(q(4,1))*cos(q(5,1));
+ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
-                        quad.a/quad.Iz*(-u(1,1)+u(2,1)+u(3,1)-u(4,1))*cos(q(4,1))*cos(q(5,1))];
+                        quad.a/quad.Iz*(u(1,1)-u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1))];
 ang_velocity = q(10:12,1) + dt*ang_accel(q(:,1),u(:,1));
 %rotation = q(4:6,1) + dt*ang_velocity;
 rotation = q(4:6,1) + dt*ang_velocity + 0.5*dt*dt*ang_accel(q(:,1),u(:,1));

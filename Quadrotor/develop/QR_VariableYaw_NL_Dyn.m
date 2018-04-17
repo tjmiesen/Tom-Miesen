@@ -20,7 +20,7 @@ f_pitch = @(u) -u(1,1)-u(2,1)+u(3,1)+u(4,1);
 f_yaw = @(u) -u(1,1)+u(2,1)+u(3,1)-u(4,1);
 ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
-                        quad.C_yaw*quad.a/quad.Iz*(-u(1,1)+u(2,1)+u(3,1)-u(4,1))*cos(q(4,1))*cos(q(5,1))];
+                        quad.C_yaw*quad.a/quad.Iz*(u(1,1)-u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1))];
  
 % ang_accel =    @(q,u)  [(quad.d/quad.Iy*(f_roll(u))*cos(q(6,1)) + quad.d/quad.Ix*(f_pitch(u))*sin(q(6,1))*cos(q(4,1))*cos(q(5,1)));
 %                         (quad.d/quad.Ix*(f_pitch(u))*cos(q(6,1)) + quad.d/quad.Iy*(f_roll(u))*sin(q(6,1))*cos(q(4,1))*cos(q(5,1)));
