@@ -15,15 +15,6 @@ function des = QR_LinearTrajectory_Ccode_similar(q, des_pos, prev_des, vmax, dt)
     end
     
     dest_norm = sqrt(des(1,1)*des(1,1)+des(2,1)*des(2,1)+des(3,1)*des(3,1));
-    
-%     for i = 1:3
-%        max_step = (des(i,1)/dest_norm)*vmax*dt; 
-%        if (abs(des(i,1)) > abs(max_step))
-%             des(i,1) = prev_des(i,1) + max_step;
-%             %des(i,1) = q(i,1) + max_step;
-%             %des(i,1) = q(i,1)+prev_des(i,1) + max_step;
-%        end
-%     end
 
     for i = 1:3
         %checks 100mm ball
@@ -32,7 +23,7 @@ function des = QR_LinearTrajectory_Ccode_similar(q, des_pos, prev_des, vmax, dt)
            if (abs(des(i,1)) > abs(max_step))
                 des(i,1) = prev_des(i,1) + max_step;
                 %des(i,1) = q(i,1) + max_step;
-                %des(i,1) = q(i,1)+prev_des(i,1) + max_step;
+                %des(i,1) = (0.25*q(i,1)+0.75*prev_des(i,1)) + max_step;
            end
        else
            des(i,1) = des_pos(i,1);

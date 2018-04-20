@@ -21,8 +21,15 @@ quad.Ix = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iy = quad.m*(quad.h^2 + quad.w^2)/12;
 quad.Iz = quad.m*(quad.w^2 + quad.w^2)/12;
 quad.controller_update_rate = 0.007; %Sample rate of microcontroller in s (~7ms)
-quad.pos_sample_rate = 0.02; %sample rate of position/vel sensor
+quad.pos_sample_rate = 0.01; %sample rate of position/vel sensor
 quad.rot_sample_rate = 0.007; %sample rate of rotational/rate sensor
+quad.k1 = 0.01;    %translational damping terms (drag forces)
+quad.k2 = 0.01;
+quad.k3 = 0.01;
+quad.k4 = 0.012;   %rotational damping terms
+quad.k5 = 0.012;
+quad.k6 = 0.012;
+
 
 quad.desired_position = [1000; 1000; 1500]; %Sets a desired position for the trajectory planning algorithm.
 quad.previous_desired_position = [0;0;0];
@@ -44,10 +51,18 @@ N = qsim.N;
 %Variable Init
 temp_control = 0;
 temp_motor = 1000;
-temp_pos = [0;0;0];
+%temp_pos = [0;0;0];
+temp_pos = zeros(3,6);
 temp_vel = [0;0;0];
+temp_vel1 = [0;0;0];
+temp_vel2 = zeros(3,6);
+vel_est_diff = zeros(3,qsim.N);
 temp_rot = [0;0;0];
-temp_ang = [0;0;0];
+%temp_ang = [0;0;0];
+temp_ang = zeros(3,6);
+temp_accel = [0;0;0];
+temp_accel_rot = [0;0;0];
+acc = zeros(3,6);
 
 
 %temp_control = 0;
@@ -56,6 +71,7 @@ q =     zeros(12, qsim.N); %state
 y =     zeros(9, qsim.N); %Output
 des =   zeros(12, qsim.N);
 mot =   zeros(4, qsim.N); %Motor Command Values
+accel_rot = zeros(3,qsim.N);
 
 %Initial Position and rotation
 q(:,1) = [0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0]; %LQR Position Controller
@@ -102,6 +118,7 @@ noise.pos = 0;    %Assume no noise directly affecting positon
 noise.rot = 0;  %Assume no noise directly affecting angle
 noise.vel = 0;
 noise.ang_vel = 0.0005; %Small vibrational noise affecting attitude rates
+noise.accel = 0.1*qsim.g; %Noise in mm/s^2 (estimating to be ~ 0.1*g)
 
 F = [eye(3)*noise.pos, zeros(3,9);
      zeros(3,3), eye(3)*noise.rot, zeros(3,6);
@@ -123,16 +140,37 @@ H = [eye(3)*noise.pos_measurement, zeros(3,9);
 %k_lqr is found such that u* = k_lqr*x(t)
 
 %Initialize P = Qf, which is 1.
-QR_LQR.Q = eye(12)*0.035;           %Sets general
-QR_LQR.Q(3,3) = 20;                 %z position
-QR_LQR.Q(4:5,4:5) = eye(2)*20;      %roll,pitch
+%QR_LQR.Q = eye(12)*0.00035;         %Sets general
+%QR_LQR.Q(3,3) = 20;                 %z position
+%QR_LQR.Q(7:8,7:8) = eye(2)*0.0005;  %xy velocity
+%QR_LQR.Q(9,9) = 10;                 %z velocity
+%QR_LQR.Q(10:11,10:11) = eye(2)*10;  %roll,pitch rates
+%QR_LQR.Q(12,12) = 10;               %yaw rate
+
+% %Corrected Q matrix for realistic velocity estimation
+% QR_LQR.Q = eye(12)*0.001;           %Sets general
+% QR_LQR.Q(3,3) = 50;                 %z position
+% QR_LQR.Q(4:5,4:5) = eye(2)*10;      %roll,pitch
+% QR_LQR.Q(6,6) = 20;                 %yaw
+% QR_LQR.Q(7:8,7:8) = eye(2)*0.00001;    %xy velocity
+% QR_LQR.Q(9,9) = 0.00001;                 %z velocity
+% QR_LQR.Q(10:11,10:11) = eye(2)*100;  %roll,pitch rates
+% QR_LQR.Q(12,12) = 50;               %yaw rate
+%QR_LQR.R = eye(4)*10;     
+
+%Corrected Q matrix for realistic velocity estimation and angle estimation
+QR_LQR.Q = eye(12)*0.005;           %Sets general
+QR_LQR.Q(3,3) = 10;                 %z position
+QR_LQR.Q(4:5,4:5) = eye(2)*50;      %roll,pitch
 QR_LQR.Q(6,6) = 20;                 %yaw
-QR_LQR.Q(7:8,7:8) = eye(2)*0.025;    %xy velocity
-QR_LQR.Q(9,9) = 10;                 %z velocity
-QR_LQR.Q(10:11,10:11) = eye(2)*10;  %roll,pitch rates
-QR_LQR.Q(12,12) = 10;               %yaw rate
+QR_LQR.Q(7:8,7:8) = eye(2)*0.00001;    %xy velocity
+QR_LQR.Q(9,9) = 0.00001;                 %z velocity
+QR_LQR.Q(10:11,10:11) = eye(2)*5000;  %roll,pitch rates
+QR_LQR.Q(12,12) = 100;               %yaw rate
+
+
 QR_LQR.P = QR_LQR.Q;
-QR_LQR.R = eye(4)*20;           
+QR_LQR.R = eye(4)*10;           
 
 %Import LQR values (note: discrete time ricatti is in the loop)
 Q = QR_LQR.Q;
@@ -154,33 +192,65 @@ mmin = 1000;
 %% System Response
 for t = 1:qsim.N-1
 %% Sensor data import
-%Collect measurement from system (Assuming we have access to positon,
-%angle (this is estimated from 2 sources on the QR so assuming is close to real - for now),
-%and angular rate. Will need to estimate the velocity);
-
+%Collect state measurement (note rotation is measurable from vicon system)
 %y(:,t) = C*q(:,t);
 y(:,t) = C*q(:,t)+H*randn(12,1);
 
 %Update pos and Rot values at set rates
 if (qsim.t_loop_pos > quad.pos_sample_rate)
-    %temp_pos = y(1:3,t);
-    temp_pos = round(y(1:3,t)); %Rounding to emulate integer capping on QR
+    % IMPORT VICON POSITON DATA
+    %Assemble historical position buffer
+    temp_pos(:,6) = temp_pos(:,5);
+    temp_pos(:,5) = temp_pos(:,4);
+    temp_pos(:,4) = temp_pos(:,3);
+    temp_pos(:,3) = temp_pos(:,2);
+    temp_pos(:,2) = temp_pos(:,1);
+    temp_pos(:,1) = round(y(1:3,t)); %Rounding to emulate integer capping on QR
     
-    %Approximate the velocity by finite difference
-    %temp_vel = (y(1:3,t)-y(1:3,t-1))/quad.pos_sample_rate;    %simulate velocity estimation
-    %Approx averaging the derivative from 3 points back
-    %temp_vel = 1/3*(y(1:3,t)-y(1:3,t-1)+y(1:3,t)-y(1:3,t-2)+y(1:3,t)-y(1:3,t-3))/quad.pos_sample_rate;
-    %Approx averaging the derivative from 4 points back
-    %temp_vel = 1/4*((y(1:3,t)-y(1:3,t-1))+(y(1:3,t)-y(1:3,t-2))+(y(1:3,t)-y(1:3,t-3))+(y(1:3,t)-y(1:3,t-4)))/quad.pos_sample_rate;
-    %Approx averaging the derivative from 5 points back
-    temp_vel = 1/5*(5*y(1:3,t)-y(1:3,t-1)-y(1:3,t-2)-y(1:3,t-3)-y(1:3,t-4)-y(1:3,t-5))/quad.pos_sample_rate;
-    temp_vel = round(temp_vel); %Emulate integer rounding error for vel
-end
-if qsim.t_loop_rot > quad.rot_sample_rate
-    temp_rot = y(4:6,t);
-    temp_ang = y(7:9,t);
-end
+    % VELOCITY ESTIMATION (AVERAGE OF FINITE DIFFERENCE APPROX)
+    %Dividing by 10 to get into range of working vel estimation
+    temp_vel2(:,1) = 1/5*(5*temp_pos(:,1)-temp_pos(:,2)-temp_pos(:,3)-temp_pos(:,4)-temp_pos(:,5)-temp_pos(:,6))/(quad.pos_sample_rate*10);
+    temp_vel = round(temp_vel2(:,1)); %Emulate integer rounding error for vel
     
+    % YAW MEASUREMENT FROM VICON (simply replaces current yaw value onboard)
+    temp_rot(3,1) = y(6,t);
+end
+if qsim.t_loop_rot > quad.rot_sample_rate  
+    % ANGULAR RATE IMPORT
+    %Filtering only done on r and p values
+    k_lowpass_ang = 0.2; %0.15-0.2
+    temp_ang(1:2,1) = k_lowpass_ang*y(7:8,t)+(1-k_lowpass_ang)*temp_ang(1:2,2);
+    temp_ang(3,1) = y(9,t);
+    %Store old rate
+    temp_ang(1:2,2) = temp_ang(1:2,1);
+    
+    % ANGLE BASED OFF ANGULAR RATE
+    %Initial angle estimation from angular rate
+    temp_rot(:,1) = temp_rot(:,1) + quad.rot_sample_rate*(temp_ang(:,1));
+    
+    % ACCEL IMPORT
+    %Accelerometer data import (sampled at the same time as gyro data)
+    %Add noise to accel data
+    acc(:,1) = acc(:,1) + noise.accel*randn();
+    %Low-pass filter on accelerometer data
+    k_lowpass_accel = 0.02; %0.02-0.075
+    temp_accel = k_lowpass_accel*acc(:,1) + (1-k_lowpass_accel)*acc(:,2);
+    %Store old accel data
+    acc(:,2) = temp_accel;
+    
+    % ACCEL ANGLE
+    %Angle determination from accelerometer data (note we're using the true yaw angle because the acceleration measurement is with respect to the body frame)
+    temp_accel_rot(1,1) = atan((cos(q(6,t))*temp_accel(2,1) + sin(q(6,t))*temp_accel(1,1))/((temp_accel(3,1) + qsim.g)));
+    temp_accel_rot(2,1) = atan((cos(q(6,t))*temp_accel(1,1) - sin(q(6,t))*temp_accel(2,1))/(sqrt((cos(q(6,t))*temp_accel(2,1) + sin(q(6,t))*temp_accel(1,1))^2 + (temp_accel(3,1)+qsim.g)^2)));
+    
+    % FINAL ANGLE ESTIMATION (COMMON FILTER)
+    %Common filter (for roll and pitch only)
+    k_com = 0.1; %0.1-0.75 (works all the way up to 1.0, however that would ignore the gyro entirely for r and p)
+    temp_rot(1:2,1) = (1-k_com)*temp_rot(1:2,1) + k_com*temp_accel_rot(1:2,1);
+end
+accel_rot(:,t) = temp_accel_rot;
+
+
 %% Trajectory Generation
 %Cork-screw
 %des(1:3,t) = [r*0.5*dt*t*cos(dt*t*omega);r*0.5*dt*t*sin(dt*t*omega);0.15*dt*t]*1000;
@@ -207,19 +277,19 @@ end
 %Switch desired locations mid-flight to test response    
 if t > N/4 && t <= N/2
   quad.desired_position = [1000; -1000; 1500];  
-% elseif t > N/2 && t <= 3*N/4
-%   quad.desired_position = [-1000; -1000; 1500];  
-% elseif t > 3*N/4
-%  quad.desired_position = [1000; 1000; 1500];
+elseif t > N/2 && t <= 3*N/4
+  quad.desired_position = [-1000; -1000; 1500];  
+elseif t > 3*N/4
+ quad.desired_position = [1000; 1000; 1500];
 end
 
-%Ends flight path preemptively and QR is supposed to stop at point
+% %Ends flight path preemptively and QR is supposed to stop at point
 % if t > 6/dt
 %   des(1:3,t) = des(1:3,t-1); 
 %   quad.previous_desired_position = des(1:3,t-1);
 % end
 
-%% Test momentary GPS communication loss (0.5s) 
+%% Test momentary GPS communication loss (0.25s) 
 % if (t > 5.0/dt && t < 5.25/dt)
 %     temp_pos = loss_temp_pos;   %Position is now the last known
 %     temp_vel = loss_temp_vel;   %Velocity is now the last known
@@ -247,7 +317,7 @@ K = [ K_lqr(1,1)*(cos(temp_rot(3,1))+sin(temp_rot(3,1))), K_lqr(1,2)*(cos(temp_r
 
 %Control value based off measured values (which are each dependent on their
 %own sample rates.
-u(:,t) = -K*([temp_pos; temp_rot; temp_vel; temp_ang] - des(:,t));
+u(:,t) = -K*([temp_pos(:,1); temp_rot(:,1); temp_vel(:,1); temp_ang(:,1)] - des(:,t));
 %u(:,t) = -K*(q(:,t)-des(:,t));
 
 %Bound the control values to actual control range (1000us-2000us) and
@@ -255,8 +325,7 @@ u(:,t) = -K*([temp_pos; temp_rot; temp_vel; temp_ang] - des(:,t));
 
 %(Uniform) Motor Pulse Noise from Interrupts (+0-14us)
 motor_pulse_noise = round(10+15*randn(1,1));
-%motor_pulse_noise = round(7+7*randn(1,1));
-%motor_pulse_noise = round(3+15*randn(1,1));
+
 for i = 1:4
    %Shift each control thrust input to hover thrust range (mg/4 per motor)
    u(i,t) = u(i,t) + quad.m*qsim.g/4;
@@ -324,7 +393,13 @@ qsim.t_loop = qsim.t_loop + qsim.dt;
 %Non-linear Dynamics (Noise and Noise-less Available)
 %Note these are note discrete as the real system is continuous by nature.
 %q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)),u(:,t),quad,qsim);
-q(:,t+1) = QR_VariableYaw_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
+[q(:,t+1),acc(:,1)] = QR_VariableYaw_NL_Dyn((q(:,t)+F*randn(12,1)),u(:,t),quad,qsim);
+
+%Simulates QR on ground (if is at 0 height, then it can't translate in xy)
+if (q(3,t+1) <= 0)
+    q(1:2,t+1) = q(1:2,t);
+    q(3,t+1) = 0;
+end
 end
 
 
@@ -335,7 +410,7 @@ plot((1:n-1)*dt, y(1:3,1:n-1))
 xlabel('Time')
 ylabel('Position Output')
 legend('X','Y','Z')
-title('Position/Rotational Dynamics (mm)')
+title('Position Dynamics (mm)')
 
 %Plot rot dynamics
 figure
@@ -354,6 +429,14 @@ ylabel('Rotational Rate Output')
 legend('wR','wP','wYaw')
 title('Rotational Rate Dynamics (deg/s)')
 
+%Plot accel rot dynamics
+figure
+plot((1:n-1)*dt, accel_rot(:,1:n-1)*180/pi())
+xlabel('Time')
+ylabel('Acceleration Rotational Output')
+legend('aR','aP','aYaw')
+title('Rotation based on Accel (deg/s)')
+ylim([-180 180])
 
 %Plot controls
 figure
