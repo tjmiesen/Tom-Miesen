@@ -11,24 +11,29 @@ dt = qsim.dt;
 %                 sum(u(:,1),1)/quad.m*cos(q(4,1))*cos(q(5,1))-g];
 
 %Damped system
-accel = @(q,u) [sum(u(:,1),1)/quad.m*(sin(q(5,1))*cos(q(6,1))+sin(q(4,1))*sin(q(6,1))) - (quad.k1/quad.m)*q(7,1);
-                sum(u(:,1),1)/quad.m*(sin(q(4,1))*cos(q(6,1))-sin(q(5,1))*sin(q(6,1))) - (quad.k2/quad.m)*q(8,1);
-                sum(u(:,1),1)/quad.m*cos(q(4,1))*cos(q(5,1))- g - (quad.k3/quad.m)*q(9,1)];
+accel = @(q,u) [sum(u(:,1),1)/quad.m*(sin(q(5,1))*cos(q(6,1))+sin(q(4,1))*sin(q(6,1))) - (qsim.k1/quad.m)*q(7,1);
+                sum(u(:,1),1)/quad.m*(sin(q(4,1))*cos(q(6,1))-sin(q(5,1))*sin(q(6,1))) - (qsim.k2/quad.m)*q(8,1);
+                sum(u(:,1),1)/quad.m*cos(q(4,1))*cos(q(5,1)) - g - (qsim.k3/quad.m)*q(9,1)];
 
             
-            velocity = q(7:9,1) + dt*accel(q(:,1),u(:,1));
+velocity = q(7:9,1) + dt*accel(q(:,1),u(:,1));
 %position = q(1:3,1) + dt*velocity;
 position = q(1:3,1) + dt*velocity + 0.5*dt*dt*accel(q(:,1),u(:,1));
 
 %% Rotational
-% ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
-%                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1));
-%                         quad.C_yaw*quad.a/quad.Iz*(u(1,1)-u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1))];
+% ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1));
+%                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1));
+%                         quad.C_yaw*quad.a/quad.Iz*(u(1,1)-u(2,1)-u(3,1)+u(4,1))];
 
-%Damped system
-ang_accel =    @(q,u)  [quad.d/quad.Iy*(-u(1,1)+u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1)) - (quad.d*quad.k4/quad.Iy)*q(10,1);
-                        quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1)) - (quad.d*quad.k5/quad.Ix)*q(11,1);
-                        quad.C_yaw*quad.a/quad.Iz*(u(1,1)-u(2,1)-u(3,1)+u(4,1))*cos(q(4,1))*cos(q(5,1)) - (quad.a*quad.k5/quad.Iz)*q(12,1)];
+% %Damped system
+% ang_accel =    @(q,u)  [quad.d/quad.Iy*(u(1,1)-u(2,1)+u(3,1)-u(4,1)) - (quad.d*quad.k4/quad.Iy)*q(10,1);
+%                         quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1)) - (quad.d*quad.k5/quad.Ix)*q(11,1);
+%                         quad.C_yaw*quad.a/quad.Iz*(-u(1,1)+u(2,1)+u(3,1)-u(4,1)) - (quad.a*quad.k6/quad.Iz)*q(12,1)];
+
+%Damped system with eccentric load on roll and pitch axis
+ang_accel =    @(q,u)  [quad.d/quad.Iy*(u(1,1)-u(2,1)+u(3,1)-u(4,1)) - (quad.d*qsim.k4/quad.Iy)*q(10,1) - quad.ecc_load*qsim.g*quad.ecc_dist*sin(q(4,1))/quad.Iy;
+                        quad.d/quad.Ix*(-u(1,1)-u(2,1)+u(3,1)+u(4,1)) - (quad.d*qsim.k5/quad.Ix)*q(11,1)  - quad.ecc_load*qsim.g*quad.ecc_dist*sin(q(5,1))/quad.Ix;
+                        quad.C_yaw*quad.a/quad.Iz*(-u(1,1)+u(2,1)+u(3,1)-u(4,1)) - (quad.a*qsim.k6/quad.Iz)*q(12,1)];
 
                     
 ang_velocity = q(10:12,1) + dt*ang_accel(q(:,1),u(:,1));
